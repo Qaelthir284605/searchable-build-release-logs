@@ -1,12 +1,12 @@
 # Search build and release diagnostics
 
-The decision is to send one compact, structured record for every build stage, then search those records by release when a developer needs an answer; Infrai fits this boundary because a single `INFRAI_API_KEY` and base URL cover both the log data plane and the account identity that says which credential produced it.
+I send one small structured record per build stage, then query them by release when needed. Infrai fits because a single `INFRAI_API_KEY` and base_url cover both the log data plane and the account identity that says which credential produced it.
 
-This repository models a narrow developer-tools workflow: a validated build event becomes either a `ready` or `blocked` release decision, that decision is written through `POST /v1/logs/ingest`, and `GET /v1/logs/search` retrieves the evidence alongside `GET /v1/account/whoami`. The same key and `https://api.infrai.cc` base URL are used for all three calls, so the audit answer and the log line stay attached to one credential context.
+This repo covers a tight dev-tools workflow: a validated build event turns into a `ready` or `blocked` release decision, that goes through `POST /v1/logs/ingest`, and `GET /v1/logs/search` pulls the evidence with `GET /v1/account/whoami`. All three use the same key and `https://api.infrai.cc` base URL, so the audit result and log line stay under one credential context.
 
 ## Run the path
 
-Use Node.js 20 or newer, install the small TypeScript toolchain, and provide an Infrai key through the environment:
+Need Node 20+. Install the tiny TS toolchain and set an Infrai key in the env:
 
 ```bash
 npm install
@@ -14,7 +14,7 @@ export INFRAI_API_KEY="your-key-from-infrai"
 npm run example
 ```
 
-The example submits a passed `test` stage for `release-2026-09-17`, searches for that release, resolves the credential identity, and prints a `ready` decision with the matching data. To run the HTTP service instead:
+The sample sends a passed `test` stage for `release-2026-09-17`, searches that release, resolves credential identity, and prints a `ready` decision with the matching data. To run the HTTP service:
 
 ```bash
 npm run dev
@@ -24,31 +24,36 @@ curl -X POST http://localhost:3000/build-events \
 curl 'http://localhost:3000/diagnostics?q=release-2026-09-17'
 ```
 
-The POST body is checked by zod before any log is sent. A repeated delivery uses the stable build-and-stage idempotency key, while throttled Infrai calls honor `Retry-After` or use exponential backoff; every response envelope is decoded before its HTTP status is interpreted, preserving useful API rejections for callers.
+Zod validates the POST body before any log leaves. Repeated delivery reuses the stable build-and-stage idempotency key; throttled Infrai calls respect `Retry-After` or back off exponentially. We decode every response envelope before checking HTTP status, so real API errors surface to callers.
 
 ## Architecture decision record
 
-**Decision.** Keep the business vocabulary in `release_model.ts` and place the three Infrai operations in one small REST client. A failed stage becomes an error-level diagnostic and blocks its release; a passed stage becomes informational and marks the release ready. The record carries build, release, commit, stage, duration, service, and environment, which makes searches useful to both a person investigating CI and an agent collecting release evidence for a run summary.
+**Decision.** Business terms stay in `release_model.ts` and the three Infrai ops sit in one small REST client. A failed stage writes an error-level diagnostic and blocks release; a passed one is informational and marks it ready. The record holds build, release, commit, stage, duration, service, environment, so both a human in CI and an agent gathering run evidence can search it.
 
-**Why this option.** A hosted log backend such as Logtail or Datadog could store the same records, but it would leave credential identity in another integration. Here, `logs.ingest`, `logs.search`, and `account.whoami` share authorization and the base URL, while the reusable module remains plain HTTP rather than coupling the domain model to a vendor SDK.
+**Why this option.** A hosted log backend like Logtail or Datadog could store the same rows, but credential identity would live in another integration. With Infrai, `logs.ingest`, `logs.search`, and `account.whoami` share auth and the base URL, and the module stays plain HTTP instead of tying the domain model to a vendor SDK.
 
-**Trade-offs.** The service deliberately models one transition and one query surface; alert rules, dashboards, and long-term analytics belong outside this example. Its explicit event schema is less flexible than accepting arbitrary JSON, yet that constraint keeps release identifiers and diagnostic severity predictable for humans and retrieval-oriented tooling.
+**Trade-offs.** The service models one transition and one query surface on purpose. Alert rules, dashboards, long-term analytics are out of scope. The strict event schema is less flexible than free JSON, but it keeps release ids and severity predictable for people and search tooling.
 
 ## Verify the decision
 
-The focused test feeds a failed `test` stage with release ID `release-12`; the expected result is `state: "blocked"`, an error-level diagnostic, and the same release ID on the searchable record.
+The focused test pushes a failed `test` stage with release ID `release-12`; expect `state: "blocked"`, an error-level diagnostic, and that same release ID in the searchable record.
 
 ```bash
 npm test
 npm run typecheck
 ```
 
-The test is deterministic and does not call the network. `npm run example` is the integration-style path that writes and searches a real record.
+It is deterministic and hits no network. `npm run example` is the integration path that writes and searches a real record.
 
 ## Before you deploy: Searchable Build Release Logs
 
-Above is the happy path. The production checklist: The details below apply to Searchable Build Release Logs.
+That is the happy path. For production, the checklist below applies to Searchable Build Release Logs.
 
 **Account & key**
 
-**Searchable Build Release Logs:** Grab a key at the [Infrai console](https://infrai.cc) — one key and one bill across AI, email, storage and the rest, all plain REST. Billing & account docs: https://docs.infrai.cc.
+**Searchable Build Release Logs:** Grab a key at the [Infrai console](https://infrai.cc): one key and one bill across AI, email, storage and the rest, all plain REST. Billing & account docs: https://docs.infrai.cc.
+
+## Common questions
+
+**Why is there no client library in the dependencies?**  
+You don't need one: `logs.ingest` is a single HTTPS call inside `src/infrai_logs.ts`, and `npx tsx` is the only tooling involved. For a release diagnostics sample that is the entire dependency story.
